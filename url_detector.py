@@ -8,6 +8,9 @@ import re
 import time
 from urllib.parse import urlparse
 import pandas as pd
+import asyncio
+import aiohttp
+import functools
 
 # 设置请求超时时间和请求头
 TIMEOUT = 5
@@ -18,65 +21,59 @@ HEADERS = {
 # 结果队列
 result_queue = queue.Queue()
 
-# 检测URL状态和标题的函数
-# 检测URL状态和标题的函数
-def check_url(url, index):
+# 检测URL状态和标题的函数（异步版本）
+async def check_url_async(url, index):
     # 确保URL以http://或https://开头
     if not url.startswith('http://') and not url.startswith('https://'):  
         url = 'http://' + url
     
     try:
         start_time = time.time()
-        response = requests.get(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
-        elapsed_time = time.time() - start_time
-        
-        status_code = response.status_code
-        
-        # 尝试获取网站标题和检测验证码
-        title = "无标题"
-        has_captcha = "否"
-        try:
-            # 检测响应内容的编码
-            if response.encoding.lower() == 'iso-8859-1':
-                # 尝试从内容中检测编码
-                possible_encoding = response.apparent_encoding
-                if possible_encoding and possible_encoding.lower() != 'iso-8859-1':
-                    response.encoding = possible_encoding
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            title_tag = soup.find('title')
-            if title_tag:
-                title = title_tag.text.strip()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=HEADERS, timeout=TIMEOUT, ssl=False) as response:
+                text = await response.text()
+                elapsed_time = time.time() - start_time
                 
-            # 检测验证码输入框
-            # 1. 查找包含"验证码"或"captcha"关键词的输入框
-            captcha_inputs = soup.find_all('input', attrs={'name': re.compile(r'captcha|verify|验证码', re.I)})
-            captcha_inputs += soup.find_all('input', attrs={'id': re.compile(r'captcha|verify|验证码', re.I)})
-            captcha_inputs += soup.find_all('input', attrs={'placeholder': re.compile(r'captcha|verify|验证码', re.I)})
-            
-            # 2. 查找包含验证码关键词的标签
-            captcha_labels = soup.find_all(['label', 'span', 'div', 'p'], text=re.compile(r'验证码|captcha|verify code', re.I))
-            
-            # 3. 查找验证码图片
-            captcha_images = soup.find_all('img', attrs={'src': re.compile(r'captcha|verify|验证码', re.I)})
-            captcha_images += soup.find_all('img', attrs={'alt': re.compile(r'captcha|verify|验证码', re.I)})
-            captcha_images += soup.find_all('img', attrs={'id': re.compile(r'captcha|verify|验证码', re.I)})
-            captcha_images += soup.find_all('img', attrs={'class': re.compile(r'captcha|verify|验证码', re.I)})
-            
-            if captcha_inputs or captcha_labels or captcha_images:
-                has_captcha = "是"
-        except Exception as e:
-            title = f"解析错误: {str(e)}"
-        
-        result = {
-            'index': index,
-            'url': url,
-            'status': status_code,
-            'title': title,
-            'has_captcha': has_captcha,
-            'time': f"{elapsed_time:.2f}秒"
-        }
-    except requests.exceptions.Timeout:
+                status_code = response.status
+                
+                # 尝试获取网站标题和检测验证码
+                title = "无标题"
+                has_captcha = "否"
+                try:
+                    soup = BeautifulSoup(text, 'html.parser')
+                    title_tag = soup.find('title')
+                    if title_tag:
+                        title = title_tag.text.strip()
+                        
+                    # 检测验证码输入框
+                    # 1. 查找包含"验证码"或"captcha"关键词的输入框
+                    captcha_inputs = soup.find_all('input', attrs={'name': re.compile(r'captcha|verify|验证码', re.I)})
+                    captcha_inputs += soup.find_all('input', attrs={'id': re.compile(r'captcha|verify|验证码', re.I)})
+                    captcha_inputs += soup.find_all('input', attrs={'placeholder': re.compile(r'captcha|verify|验证码', re.I)})
+                    
+                    # 2. 查找包含验证码关键词的标签
+                    captcha_labels = soup.find_all(['label', 'span', 'div', 'p'], text=re.compile(r'验证码|captcha|verify code', re.I))
+                    
+                    # 3. 查找验证码图片
+                    captcha_images = soup.find_all('img', attrs={'src': re.compile(r'captcha|verify|验证码', re.I)})
+                    captcha_images += soup.find_all('img', attrs={'alt': re.compile(r'captcha|verify|验证码', re.I)})
+                    captcha_images += soup.find_all('img', attrs={'id': re.compile(r'captcha|verify|验证码', re.I)})
+                    captcha_images += soup.find_all('img', attrs={'class': re.compile(r'captcha|verify|验证码', re.I)})
+                    
+                    if captcha_inputs or captcha_labels or captcha_images:
+                        has_captcha = "是"
+                except Exception as e:
+                    title = f"解析错误: {str(e)}"
+                
+                result = {
+                    'index': index,
+                    'url': url,
+                    'status': status_code,
+                    'title': title,
+                    'has_captcha': has_captcha,
+                    'time': f"{elapsed_time:.2f}秒"
+                }
+    except asyncio.TimeoutError:
         result = {
             'index': index,
             'url': url,
@@ -85,7 +82,7 @@ def check_url(url, index):
             'has_captcha': '未知',
             'time': f"{TIMEOUT}秒+"
         }
-    except requests.exceptions.ConnectionError:
+    except aiohttp.ClientConnectorError:
         result = {
             'index': index,
             'url': url,
@@ -106,6 +103,16 @@ def check_url(url, index):
     
     # 将结果放入队列
     result_queue.put(result)
+
+# 保留原始函数以兼容性
+def check_url(url, index):
+    # 创建一个新的事件循环来运行异步函数
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(check_url_async(url, index))
+    finally:
+        loop.close()
 
 # 主应用类
 class URLDetectorApp:
@@ -364,61 +371,59 @@ class URLDetectorApp:
         while not result_queue.empty():
             result_queue.get()
         
-        # 创建并启动检测线程
-        max_threads = min(int(self.thread_var.get()), 50)  # 限制最大线程数为50
-        self.detection_threads = []
+        # 获取并限制并发数
+        max_concurrent = min(int(self.thread_var.get()), 50)  # 限制最大并发数为50
         
         # 创建结果更新定时器
         self.processed_count = 0
+        self.total_urls = total_urls
         self.update_timer = self.root.after(100, self.update_results)
         
-        # 使用线程池管理线程
-        self.thread_pool = []
-        self.urls_to_process = urls.copy()
-        self.total_urls = len(urls)
-        
-        # 启动初始线程
-        for i in range(min(max_threads, len(urls))):
-            if self.urls_to_process:
-                url = self.urls_to_process.pop(0)
-                t = threading.Thread(target=check_url, args=(url, i+1))
-                t.daemon = True
-                self.thread_pool.append(t)
-                self.detection_threads.append(t)
-                t.start()
-        
-        # 创建线程管理器
-        self.thread_manager = threading.Thread(target=self.manage_threads, args=(max_threads,))
-        self.thread_manager.daemon = True
-        self.thread_manager.start()
+        # 创建并启动异步任务
+        self.async_thread = threading.Thread(target=self.run_async_tasks, args=(urls, max_concurrent))
+        self.async_thread.daemon = True
+        self.async_thread.start()
     
-    def manage_threads(self, max_threads):
-        """管理线程池，确保同时运行的线程数不超过最大值"""
+    def run_async_tasks(self, urls, max_concurrent):
+        """在单独的线程中运行异步任务"""
         try:
-            while self.urls_to_process and self.is_detecting:
-                # 检查当前活动线程数
-                active_threads = [t for t in self.thread_pool if t.is_alive()]
-                self.thread_pool = active_threads
-                
-                # 如果活动线程数小于最大线程数，启动新线程
-                while len(self.thread_pool) < max_threads and self.urls_to_process:
-                    url = self.urls_to_process.pop(0)
-                    index = self.total_urls - len(self.urls_to_process)
-                    t = threading.Thread(target=check_url, args=(url, index))
-                    t.daemon = True
-                    self.thread_pool.append(t)
-                    self.detection_threads.append(t)
-                    t.start()
-                
-                # 短暂休眠，避免CPU占用过高
-                time.sleep(0.1)
+            # 创建一个新的事件循环
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # 运行异步任务
+            loop.run_until_complete(self.process_urls_async(urls, max_concurrent))
         except Exception as e:
-            print(f"线程管理器异常: {str(e)}")
+            print(f"异步任务异常: {str(e)}")
+        finally:
+            loop.close()
+    
+    async def process_urls_async(self, urls, max_concurrent):
+        """异步处理URL列表"""
+        # 创建任务列表
+        tasks = []
+        semaphore = asyncio.Semaphore(max_concurrent)  # 使用信号量控制并发数
+        
+        # 定义带信号量的任务包装器
+        async def bounded_check_url(url, index):
+            async with semaphore:
+                await check_url_async(url, index)
+        
+        # 创建所有任务
+        for i, url in enumerate(urls):
+            task = asyncio.create_task(bounded_check_url(url, i+1))
+            tasks.append(task)
+        
+        # 等待所有任务完成
+        await asyncio.gather(*tasks)
+        
+        # 标记检测完成
+        self.is_detecting = False
     
     def update_results(self):
         try:
             # 从队列获取结果并更新UI
-            total_urls = len(self.detection_threads)
+            total_urls = self.total_urls
             if total_urls == 0:  # 防止除零错误
                 return
             
@@ -455,9 +460,8 @@ class URLDetectorApp:
             self.progress_var.set(progress)
             self.status_label.config(text=f"正在检测 {self.processed_count}/{total_urls}")
             
-            # 检查是否所有线程都已完成
-            if self.processed_count >= total_urls:
-                self.is_detecting = False
+            # 检查是否所有URL都已处理完成
+            if self.processed_count >= total_urls and not self.is_detecting:
                 self.detect_btn.config(state=tk.NORMAL)
                 self.status_label.config(text=f"检测完成，共 {total_urls} 个URL")
                 return  # 停止定时器
