@@ -1,1 +1,8 @@
-# url_detector
+# URL 批量检测探测器 使用教程
+
+## 1. 安装运行依赖
+
+在终端中运行以下命令以安装所需的依赖项：
+
+```bash
+pip install -r requirements.txt
