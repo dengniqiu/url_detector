@@ -1,4 +1,4 @@
-# URL 批量检测探测器 使用教程
+# URL 批量检测探测器
 
 ## 1. 安装运行依赖
 
@@ -15,3 +15,8 @@ pip install -r requirements.txt
 ```bash
 python url_detector.py
 ```
+
+tips：点击序号可以进行升序倒叙排序
+
+##使用界面
+![image](https://github.com/user-attachments/assets/36ff7ed0-4650-4003-8a17-a2e062ff43c3)
