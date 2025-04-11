@@ -6,7 +6,7 @@
 
 ```bash
 pip install -r requirements.txt
-···
+```
 2. 运行脚本
 安装完成后，使用以下命令运行脚本：
 
